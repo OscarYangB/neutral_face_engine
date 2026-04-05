@@ -32,9 +32,10 @@ int main() {
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) {
-                done = true;
-            }
+			switch(event.type) {
+			case SDL_EVENT_QUIT: done = true; break;
+			case SDL_EVENT_WINDOW_RESIZED: on_window_resized(); break;
+			}
         }
 
         update();

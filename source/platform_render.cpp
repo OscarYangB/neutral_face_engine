@@ -19,6 +19,7 @@ vk::raii::Device vulkan_device = nullptr;
 vk::PhysicalDeviceFeatures vulkan_device_features;
 vk::raii::Queue vulkan_queue = nullptr;
 vk::raii::SurfaceKHR vulkan_surface = nullptr;
+vk::SurfaceFormatKHR format;
 vk::Extent2D extent;
 vk::raii::SwapchainKHR* swapchain;
 std::vector<vk::Image> swapchain_images{};
@@ -30,6 +31,7 @@ std::vector<vk::raii::CommandBuffer> command_buffers{};
 std::vector<vk::raii::Semaphore> present_semaphores{};
 std::vector<vk::raii::Semaphore> render_semaphores{};
 std::vector<vk::raii::Fence> draw_fences{};
+bool frame_buffer_resized = false;
 
 static_assert(true); // There's a clang bug that gives a warning unless this fucking thing is here
 #pragma clang diagnostic push
@@ -38,6 +40,54 @@ constexpr char shader_data[] = {
 	#embed "../shaders/slang.spv"
 };
 #pragma clang diagnostic pop
+
+void create_swapchain() {
+	auto surface_capabilities = vulkan_physical_device.getSurfaceCapabilitiesKHR(*vulkan_surface);
+	std::vector<vk::SurfaceFormatKHR> available_formats = vulkan_physical_device.getSurfaceFormatsKHR(vulkan_surface);
+	assert(!available_formats.empty());
+	format = *std::ranges::find_if(available_formats, [](const auto& format){
+		return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+	});
+	int width, height;
+	SDL_GetWindowSize(window, &width, &height);
+	if (surface_capabilities.currentExtent.width != std::numeric_limits<u32>::max()) {
+		extent = surface_capabilities.currentExtent;
+	} else {
+		extent = {std::clamp<uint32_t>(width, surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
+				  std::clamp<uint32_t>(height, surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height)};
+	}
+	auto image_count = std::max(3u, surface_capabilities.minImageCount);
+    if ((0 < surface_capabilities.maxImageCount) && (surface_capabilities.maxImageCount < image_count)) {
+		image_count = surface_capabilities.maxImageCount;
+	}
+	vk::SwapchainCreateInfoKHR swapchain_info {
+		.surface = *vulkan_surface,
+		.minImageCount = image_count,
+		.imageFormat = format.format,
+		.imageColorSpace = format.colorSpace,
+		.imageExtent = extent,
+		.imageArrayLayers = 1,
+		.imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+		.imageSharingMode = vk::SharingMode::eExclusive,
+		.preTransform = surface_capabilities.currentTransform,
+		.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+		.presentMode = vk::PresentModeKHR::eFifo,
+		.clipped = true
+	};
+	swapchain = new vk::raii::SwapchainKHR(vulkan_device, swapchain_info);
+
+	swapchain_images = swapchain->getImages();
+
+	vk::ImageViewCreateInfo image_view_info {
+		.viewType = vk::ImageViewType::e2D,
+		.format = format.format,
+		.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+	};
+	for (auto& image : swapchain_images) {
+		image_view_info.image = image;
+		swapchain_image_views.emplace_back(vulkan_device, image_view_info);
+	}
+}
 
 bool create_window() {
 	SDL_SetAppMetadata("neutral face engine", "0.1", "");
@@ -124,51 +174,7 @@ bool create_window() {
 
 	vulkan_queue = vk::raii::Queue(vulkan_device, family_index, 0);
 
-	auto surface_capabilities = vulkan_physical_device.getSurfaceCapabilitiesKHR(*vulkan_surface);
-	std::vector<vk::SurfaceFormatKHR> available_formats = vulkan_physical_device.getSurfaceFormatsKHR(vulkan_surface);
-	assert(!available_formats.empty());
-	const auto format = std::ranges::find_if(available_formats, [](const auto& format){
-		return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
-	});
-	int width, height;
-	SDL_GetWindowSize(window, &width, &height);
-	if (surface_capabilities.currentExtent.width != std::numeric_limits<u32>::max()) {
-		extent = surface_capabilities.currentExtent;
-	} else {
-		extent = {std::clamp<uint32_t>(width, surface_capabilities.minImageExtent.width, surface_capabilities.maxImageExtent.width),
-				  std::clamp<uint32_t>(height, surface_capabilities.minImageExtent.height, surface_capabilities.maxImageExtent.height)};
-	}
-	auto image_count = std::max(3u, surface_capabilities.minImageCount);
-    if ((0 < surface_capabilities.maxImageCount) && (surface_capabilities.maxImageCount < image_count)) {
-		image_count = surface_capabilities.maxImageCount;
-	}
-	vk::SwapchainCreateInfoKHR swapchain_info {
-		.surface = *vulkan_surface,
-		.minImageCount = image_count,
-		.imageFormat = format->format,
-		.imageColorSpace = format->colorSpace,
-		.imageExtent = extent,
-		.imageArrayLayers = 1,
-		.imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-		.imageSharingMode = vk::SharingMode::eExclusive,
-		.preTransform = surface_capabilities.currentTransform,
-		.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-		.presentMode = vk::PresentModeKHR::eFifo,
-		.clipped = true
-	};
-	swapchain = new vk::raii::SwapchainKHR(vulkan_device, swapchain_info);
-
-	swapchain_images = swapchain->getImages();
-
-	vk::ImageViewCreateInfo image_view_info {
-		.viewType = vk::ImageViewType::e2D,
-		.format = format->format,
-		.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-	};
-	for (auto& image : swapchain_images) {
-		image_view_info.image = image;
-		swapchain_image_views.emplace_back(vulkan_device, image_view_info);
-	}
+	create_swapchain();
 
 	vk::ShaderModuleCreateInfo shader_info{.codeSize = sizeof(shader_data), .pCode = reinterpret_cast<const uint32_t*>(shader_data)};
 	vk::raii::ShaderModule shader_module = {vulkan_device, shader_info};
@@ -221,7 +227,7 @@ bool create_window() {
 		},
 		{
 			.colorAttachmentCount = 1,
-			.pColorAttachmentFormats = &format->format
+			.pColorAttachmentFormats = &format.format
 		}
 	};
 	vulkan_pipeline = vk::raii::Pipeline(vulkan_device, nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
@@ -299,11 +305,35 @@ void record_command(u32 index) {
 	command_buffers[frame_index].end();
 }
 
+void reset_swapchain() {
+	swapchain_image_views.clear();
+	delete swapchain;
+	swapchain = nullptr;
+
+	while ((SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0) {
+		SDL_Event event;
+		SDL_WaitEvent(&event);
+		if (event.type == SDL_EVENT_WINDOW_RESTORED) {
+			break;
+		}
+	}
+
+	vulkan_device.waitIdle();
+	create_swapchain();
+}
+
 void draw_frame() {
 	auto fence_result = vulkan_device.waitForFences(*draw_fences[frame_index], vk::True, UINT64_MAX);
-	vulkan_device.resetFences(*draw_fences[frame_index]);
+	assert(fence_result == vk::Result::eSuccess);
 	auto [result, index] = swapchain->acquireNextImage(UINT64_MAX, *present_semaphores[frame_index], nullptr);
+	if (result == vk::Result::eErrorOutOfDateKHR) {
+		reset_swapchain();
+		return;
+	}
+	assert(result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR);
+	vulkan_device.resetFences(*draw_fences[frame_index]);
 	record_command(index);
+
 	vk::PipelineStageFlags wait_destination_stage_mask{vk::PipelineStageFlagBits::eColorAttachmentOutput};
 	vk::SubmitInfo submit_info = {
 		.waitSemaphoreCount = 1,
@@ -314,6 +344,7 @@ void draw_frame() {
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &*render_semaphores[frame_index]};
 	vulkan_queue.submit(submit_info, *draw_fences[frame_index]);
+
 	vk::PresentInfoKHR present_info {
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &*render_semaphores[frame_index],
@@ -321,7 +352,18 @@ void draw_frame() {
 		.pSwapchains = &**swapchain,
 		.pImageIndices = &index};
 	result = vulkan_queue.presentKHR(present_info);
+	if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || frame_buffer_resized) {
+		frame_buffer_resized = false;
+		reset_swapchain();
+	} else {
+		assert(result == vk::Result::eSuccess);
+	}
+
 	frame_index = (frame_index + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void on_window_resized() {
+	frame_buffer_resized = true;
 }
 
 void destroy_window() {
