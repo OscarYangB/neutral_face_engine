@@ -10,6 +10,8 @@
 
 SDL_Window* window{};
 
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+u32 frame_index = 0;
 vk::raii::Context* vulkan_context;
 vk::raii::Instance vulkan_instance = nullptr;
 vk::raii::PhysicalDevice vulkan_physical_device = nullptr;
@@ -24,10 +26,10 @@ std::vector<vk::raii::ImageView> swapchain_image_views{};
 vk::raii::PipelineLayout pipeline_layout = nullptr;
 vk::raii::Pipeline vulkan_pipeline = nullptr;
 vk::raii::CommandPool command_pool = nullptr;
-vk::raii::CommandBuffer command_buffer = nullptr;
-vk::raii::Semaphore present_semaphore = nullptr;
-vk::raii::Semaphore render_semaphore = nullptr;
-vk::raii::Fence draw_fence = nullptr;
+std::vector<vk::raii::CommandBuffer> command_buffers{};
+std::vector<vk::raii::Semaphore> present_semaphores{};
+std::vector<vk::raii::Semaphore> render_semaphores{};
+std::vector<vk::raii::Fence> draw_fences{};
 
 static_assert(true); // There's a clang bug that gives a warning unless this fucking thing is here
 #pragma clang diagnostic push
@@ -222,18 +224,23 @@ bool create_window() {
 			.pColorAttachmentFormats = &format->format
 		}
 	};
-
 	vulkan_pipeline = vk::raii::Pipeline(vulkan_device, nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
 
 	vk::CommandPoolCreateInfo pool_info = {.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = family_index};
 	command_pool = vk::raii::CommandPool(vulkan_device, pool_info);
 
-	vk::CommandBufferAllocateInfo allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-	command_buffer = std::move(vk::raii::CommandBuffers(vulkan_device, allocate_info).front());
+	vk::CommandBufferAllocateInfo allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
+	command_buffers = vk::raii::CommandBuffers(vulkan_device, allocate_info);
 
-	present_semaphore = vk::raii::Semaphore(vulkan_device, {});
-	render_semaphore = vk::raii::Semaphore(vulkan_device, {});
-	draw_fence = vk::raii::Fence(vulkan_device, {.flags = vk::FenceCreateFlagBits::eSignaled});
+	assert(present_semaphores.empty() && render_semaphores.empty() && draw_fences.empty());
+	for (size_t i = 0; i < swapchain_images.size(); i++) {
+		render_semaphores.emplace_back(vulkan_device, vk::SemaphoreCreateInfo());
+	}
+
+	for (size_t i = 0; i < swapchain_images.size(); i++) {
+		present_semaphores.emplace_back(vulkan_device, vk::SemaphoreCreateInfo());
+		draw_fences.emplace_back(vulkan_device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+	}
 
 	return true;
 }
@@ -263,11 +270,11 @@ void transition_image_layout(u32 image_index, vk::ImageLayout old_layout, vk::Im
 		.imageMemoryBarrierCount = 1,
 		.pImageMemoryBarriers    = &barrier};
 
-    command_buffer.pipelineBarrier2(dependency_info);
+    command_buffers[frame_index].pipelineBarrier2(dependency_info);
 }
 
 void record_command(u32 index) {
-	command_buffer.begin({});
+	command_buffers[frame_index].begin({});
 
 	transition_image_layout(index, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, {}, vk::AccessFlagBits2::eColorAttachmentWrite,
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
@@ -281,39 +288,40 @@ void record_command(u32 index) {
 		.layerCount = 1,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &attachment_info};
-	command_buffer.beginRendering(rendering_info);
-	command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
-	command_buffer.setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
-	command_buffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
-	command_buffer.draw(3, 1, 0, 0);
-	command_buffer.endRendering();
+	command_buffers[frame_index].beginRendering(rendering_info);
+	command_buffers[frame_index].bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
+	command_buffers[frame_index].setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
+	command_buffers[frame_index].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
+	command_buffers[frame_index].draw(3, 1, 0, 0);
+	command_buffers[frame_index].endRendering();
 	transition_image_layout(index, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe);
-	command_buffer.end();
+	command_buffers[frame_index].end();
 }
 
 void draw_frame() {
-	auto fence_result = vulkan_device.waitForFences(*draw_fence, vk::True, UINT64_MAX);
-	vulkan_device.resetFences(*draw_fence);
-	auto [result, index] = swapchain->acquireNextImage(UINT64_MAX, *present_semaphore, nullptr);
+	auto fence_result = vulkan_device.waitForFences(*draw_fences[frame_index], vk::True, UINT64_MAX);
+	vulkan_device.resetFences(*draw_fences[frame_index]);
+	auto [result, index] = swapchain->acquireNextImage(UINT64_MAX, *present_semaphores[frame_index], nullptr);
 	record_command(index);
 	vk::PipelineStageFlags wait_destination_stage_mask{vk::PipelineStageFlagBits::eColorAttachmentOutput};
 	vk::SubmitInfo submit_info = {
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &*present_semaphore,
+		.pWaitSemaphores = &*present_semaphores[frame_index],
 		.pWaitDstStageMask = &wait_destination_stage_mask,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &*command_buffer,
+		.pCommandBuffers = &*command_buffers[frame_index],
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &*render_semaphore};
-	vulkan_queue.submit(submit_info, *draw_fence);
+		.pSignalSemaphores = &*render_semaphores[frame_index]};
+	vulkan_queue.submit(submit_info, *draw_fences[frame_index]);
 	vk::PresentInfoKHR present_info {
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &*render_semaphore,
+		.pWaitSemaphores = &*render_semaphores[frame_index],
 		.swapchainCount = 1,
 		.pSwapchains = &**swapchain,
 		.pImageIndices = &index};
 	result = vulkan_queue.presentKHR(present_info);
+	frame_index = (frame_index + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void destroy_window() {
