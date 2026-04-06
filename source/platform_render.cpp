@@ -7,6 +7,27 @@
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include "vulkan/vulkan_raii.hpp"
 #include "definitions.h"
+#include "vector.h"
+
+struct Vertex {
+	Vector2 position{};
+	Vector3 color{};
+
+	static vk::VertexInputBindingDescription get_vulkan_binding_description() {
+		return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
+	}
+
+	static std::array<vk::VertexInputAttributeDescription, 2> get_vulkan_attribute_description() {
+		return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = offsetof(Vertex, position)},
+				 {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)}}};
+	}
+};
+
+constexpr Vertex test_vertices[] = {
+    {{0.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+};
 
 SDL_Window* window{};
 
@@ -27,6 +48,8 @@ std::vector<vk::raii::ImageView> swapchain_image_views{};
 vk::raii::PipelineLayout pipeline_layout = nullptr;
 vk::raii::Pipeline vulkan_pipeline = nullptr;
 vk::raii::CommandPool command_pool = nullptr;
+vk::raii::Buffer vertex_buffer = nullptr;
+vk::raii::DeviceMemory vertex_buffer_memory = nullptr;
 std::vector<vk::raii::CommandBuffer> command_buffers{};
 std::vector<vk::raii::Semaphore> present_semaphores{};
 std::vector<vk::raii::Semaphore> render_semaphores{};
@@ -87,6 +110,19 @@ void create_swapchain() {
 		image_view_info.image = image;
 		swapchain_image_views.emplace_back(vulkan_device, image_view_info);
 	}
+}
+
+u32 find_memory_type(u32 type_filter, vk::MemoryPropertyFlags required_memory_properties) {
+	vk::PhysicalDeviceMemoryProperties memory_properties = vulkan_physical_device.getMemoryProperties();
+
+	for (u32 i = 0; i < memory_properties.memoryTypeCount; i++) {
+		if ((type_filter & (1 << i)) &&
+			(memory_properties.memoryTypes[i].propertyFlags & required_memory_properties) == required_memory_properties) {
+			return i;
+		}
+	}
+
+	throw std::runtime_error("wtf");
 }
 
 bool create_window() {
@@ -183,7 +219,12 @@ bool create_window() {
 	vk::PipelineShaderStageCreateInfo shader_stages[] = {vertex_shader_stage_info, fragment_shader_stage_info};
 	std::vector<vk::DynamicState> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 	vk::PipelineDynamicStateCreateInfo dynamic_state{.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()), .pDynamicStates = dynamic_states.data()};
-	vk::PipelineVertexInputStateCreateInfo vertex_input_info{};
+	auto binding_description = Vertex::get_vulkan_binding_description();
+	auto attribute_descriptions = Vertex::get_vulkan_attribute_description();
+	vk::PipelineVertexInputStateCreateInfo vertex_input_info{.vertexBindingDescriptionCount = 1,
+															 .pVertexBindingDescriptions = &binding_description,
+															 .vertexAttributeDescriptionCount = static_cast<u32>(attribute_descriptions.size()),
+															 .pVertexAttributeDescriptions = attribute_descriptions.data()};
 	vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::eTriangleList};
 	vk::Viewport viewport{0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f};
 	vk::Rect2D scissor{vk::Offset2D{0,0}, extent};
@@ -234,6 +275,36 @@ bool create_window() {
 
 	vk::CommandPoolCreateInfo pool_info = {.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = family_index};
 	command_pool = vk::raii::CommandPool(vulkan_device, pool_info);
+
+	vk::DeviceSize buffer_size = sizeof(test_vertices);
+	vk::BufferCreateInfo staging_info = {.size = buffer_size, .usage = vk::BufferUsageFlagBits::eTransferSrc, .sharingMode = vk::SharingMode::eExclusive};
+	vk::raii::Buffer staging_buffer(vulkan_device, staging_info);
+	vk::MemoryRequirements staging_memory_requirements = staging_buffer.getMemoryRequirements();
+	vk::MemoryAllocateInfo staging_allocate_info{.allocationSize = staging_memory_requirements.size,
+												 .memoryTypeIndex = find_memory_type(staging_memory_requirements.memoryTypeBits,
+																					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
+	vk::raii::DeviceMemory staging_memory(vulkan_device, staging_allocate_info);
+	staging_buffer.bindMemory(staging_memory, 0);
+	void* staging_data = staging_memory.mapMemory(0, staging_info.size);
+	memcpy(staging_data, test_vertices, buffer_size);
+	staging_memory.unmapMemory();
+
+	vk::BufferCreateInfo buffer_info{.size = buffer_size,
+									 .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+									 .sharingMode = vk::SharingMode::eExclusive};
+	vertex_buffer = vk::raii::Buffer(vulkan_device, buffer_info);
+	vk::MemoryRequirements memory_requirements = vertex_buffer.getMemoryRequirements();
+	vk::MemoryAllocateInfo memory_allocate_info { .allocationSize = memory_requirements.size,
+												  .memoryTypeIndex = find_memory_type(memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)};
+	vertex_buffer_memory = vk::raii::DeviceMemory(vulkan_device, memory_allocate_info);
+	vertex_buffer.bindMemory(*vertex_buffer_memory, 0);
+	vk::CommandBufferAllocateInfo transfer_allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+	vk::raii::CommandBuffer transfer_command_buffer = std::move(vulkan_device.allocateCommandBuffers(transfer_allocate_info).front());
+	transfer_command_buffer.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+	transfer_command_buffer.copyBuffer(staging_buffer, vertex_buffer, vk::BufferCopy(0, 0, buffer_size));
+	transfer_command_buffer.end();
+	vulkan_queue.submit(vk::SubmitInfo{.commandBufferCount = 1, .pCommandBuffers = &*transfer_command_buffer }, nullptr);
+	vulkan_queue.waitIdle();
 
 	vk::CommandBufferAllocateInfo allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 	command_buffers = vk::raii::CommandBuffers(vulkan_device, allocate_info);
@@ -296,9 +367,10 @@ void record_command(u32 index) {
 		.pColorAttachments = &attachment_info};
 	command_buffers[frame_index].beginRendering(rendering_info);
 	command_buffers[frame_index].bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
+	command_buffers[frame_index].bindVertexBuffers(0, *vertex_buffer, {0});
 	command_buffers[frame_index].setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
 	command_buffers[frame_index].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
-	command_buffers[frame_index].draw(3, 1, 0, 0);
+	command_buffers[frame_index].draw(static_cast<u32>(sizeof(test_vertices) / sizeof(Vertex)), 1, 0, 0);
 	command_buffers[frame_index].endRendering();
 	transition_image_layout(index, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe);
