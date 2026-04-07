@@ -30,13 +30,13 @@ Vector2& Vector2::operator-=(const Vector2& other) {
 	return *this;
 }
 
-Vector2 Vector2::normalized() {
+Vector2 Vector2::normalized() const {
 	assert(!(x == 0.f && y == 0.f));
 	float mag = magnitude();
 	return Vector2{x / mag, y / mag};
 }
 
-float Vector2::magnitude() {
+float Vector2::magnitude() const {
 	return std::sqrt(x * x + y * y);
 }
 
@@ -77,13 +77,13 @@ Vector3& Vector3::operator-=(const Vector3& other) {
 	return *this;
 }
 
-Vector3 Vector3::normalized() {
+Vector3 Vector3::normalized() const {
 	assert(!(x == 0.f && y == 0.f && z == 0.f));
 	float mag = magnitude();
 	return Vector3{x / mag, y / mag, z / mag};
 }
 
-float Vector3::magnitude() {
+float Vector3::magnitude() const {
 	return std::sqrt(x * x + y * y + z * z);
 }
 

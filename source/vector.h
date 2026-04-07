@@ -10,8 +10,8 @@ struct Vector2 {
 	float operator*(const Vector2& other) const;
 	Vector2& operator+=(const Vector2& other);
 	Vector2& operator-=(const Vector2& other);
-	Vector2 normalized();
-	float magnitude();
+	Vector2 normalized() const;
+	float magnitude() const;
 
 	template<typename T>
 	Vector2 operator*(const T other) const {
@@ -72,8 +72,8 @@ struct Vector3 {
 	Vector3 operator-(const Vector3& other) const;
 	Vector3& operator+=(const Vector3& other);
 	Vector3& operator-=(const Vector3& other);
-	Vector3 normalized();
-	float magnitude();
+	Vector3 normalized() const;
+	float magnitude() const;
 
 	inline float r() const { return x; }
 	inline float g() const { return y; }
@@ -116,6 +116,11 @@ struct Vector3 {
 
 	static constexpr Vector3 zero() { return Vector3{0.f, 0.f, 0.f}; }
 	static constexpr Vector3 one() { return Vector3{1.f, 1.f, 1.f}; }
+	static constexpr Vector3 up() { return Vector3{0.f, 0.f, 1.f}; }
+	static constexpr Vector3 down() { return Vector3{0.f, 0.f, -1.f}; }
+	static constexpr Vector3 i() { return Vector3{1.f, 0.f, 0.f}; }
+	static constexpr Vector3 j() { return Vector3{0.f, 1.f, 0.f}; }
+	static constexpr Vector3 k() { return Vector3{0.f, 0.f, 1.f}; }
 };
 
 template<typename T>

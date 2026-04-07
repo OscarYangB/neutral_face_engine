@@ -1,4 +1,3 @@
-#include <iostream>
 #include <vulkan/vulkan_raii.hpp>
 #include "platform_render.h"
 #include "definitions.h"
@@ -11,8 +10,6 @@ void update() {
 }
 
 int main() {
-	std::cout << "hello world";
-
 	if (!start_render()) {
 		return 1;
 	}
