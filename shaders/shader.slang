@@ -1,5 +1,5 @@
 struct VertexInput {
-    float2 position;
+    float3 position;
     float3 color;
 };
 
@@ -19,7 +19,7 @@ struct VertexOutput {
 [shader("vertex")]
 VertexOutput vert_main(VertexInput input) {
     VertexOutput output;
-    output.position = mul(uniform_buffer.projection, mul(uniform_buffer.view, mul(uniform_buffer.model, float4(input.position, 0.0, 1.0))));
+    output.position = mul(uniform_buffer.projection, mul(uniform_buffer.view, mul(uniform_buffer.model, float4(input.position, 1.0))));
     output.color = input.color;
     return output;
 };

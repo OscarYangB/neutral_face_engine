@@ -98,19 +98,12 @@ Matrix Matrix::look_at(const Vector3& eye, const Vector3& center) {
 }
 
 Matrix Matrix::perspective(float angle, float aspect_ratio, float near_clip, float far_clip) {
-	const float n = near_clip;
-	const float f = far_clip;
-	const float t = std::tan(angle / 2.f) * n;
-	const float b = -t;
-	const float r = (2 * t * aspect_ratio) / 2.f;
-	const float l = -r;
+	const float tan = std::tan(angle / 2.f);
 	Matrix result = Matrix::zero();
-	result[0][0] = (2.f * n) / (r - l);
-	result[0][2] = (l + r) / (r - l);
-	result[1][1] = (-2.f * n) / (t - b);
-	result[1][2] = (b + t) / (t - b);
-	result[2][2] = (-n - f) / (f - n);
-	result[2][3] = (-2.f * n * f) / (f - n);
+	result[0][0] = 1.f / (aspect_ratio * tan);
+	result[1][1] = 1.f / tan;
+	result[2][2] = far_clip / (near_clip - far_clip);
+	result[2][3] = -(far_clip * near_clip) / (far_clip - near_clip);
 	result[3][2] = -1.f;
 	return result;
 }
