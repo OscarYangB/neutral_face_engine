@@ -24,9 +24,14 @@ struct Vertex {
 };
 
 constexpr Vertex test_vertices[] = {
-    {{0.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+constexpr u16 test_indices[] {
+	0, 1, 2, 2, 3, 0
 };
 
 SDL_Window* window{};
@@ -50,6 +55,8 @@ vk::raii::Pipeline vulkan_pipeline = nullptr;
 vk::raii::CommandPool command_pool = nullptr;
 vk::raii::Buffer vertex_buffer = nullptr;
 vk::raii::DeviceMemory vertex_buffer_memory = nullptr;
+vk::raii::Buffer index_buffer = nullptr;
+vk::raii::DeviceMemory index_buffer_memory = nullptr;
 std::vector<vk::raii::CommandBuffer> command_buffers{};
 std::vector<vk::raii::Semaphore> present_semaphores{};
 std::vector<vk::raii::Semaphore> render_semaphores{};
@@ -125,7 +132,26 @@ u32 find_memory_type(u32 type_filter, vk::MemoryPropertyFlags required_memory_pr
 	throw std::runtime_error("wtf");
 }
 
-bool create_window() {
+void create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage_flags, vk::MemoryPropertyFlags memory_flags, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& memory) {
+	vk::BufferCreateInfo staging_info = {.size = size, .usage = usage_flags, .sharingMode = vk::SharingMode::eExclusive};
+	buffer = vk::raii::Buffer(vulkan_device, staging_info);
+	vk::MemoryRequirements memory_requirements = buffer.getMemoryRequirements();
+	vk::MemoryAllocateInfo allocate_info{.allocationSize = memory_requirements.size, .memoryTypeIndex = find_memory_type(memory_requirements.memoryTypeBits, memory_flags)};
+	memory = vk::raii::DeviceMemory(vulkan_device, allocate_info);
+	buffer.bindMemory(memory, 0);
+}
+
+void copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination, vk::DeviceSize size) {
+	vk::CommandBufferAllocateInfo transfer_allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
+	vk::raii::CommandBuffer transfer_command_buffer = std::move(vulkan_device.allocateCommandBuffers(transfer_allocate_info).front());
+	transfer_command_buffer.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+	transfer_command_buffer.copyBuffer(source, destination, vk::BufferCopy(0, 0, size));
+	transfer_command_buffer.end();
+	vulkan_queue.submit(vk::SubmitInfo{.commandBufferCount = 1, .pCommandBuffers = &*transfer_command_buffer }, nullptr);
+	vulkan_queue.waitIdle();
+}
+
+bool start_render() {
 	SDL_SetAppMetadata("neutral face engine", "0.1", "");
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
@@ -276,35 +302,35 @@ bool create_window() {
 	vk::CommandPoolCreateInfo pool_info = {.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = family_index};
 	command_pool = vk::raii::CommandPool(vulkan_device, pool_info);
 
-	vk::DeviceSize buffer_size = sizeof(test_vertices);
-	vk::BufferCreateInfo staging_info = {.size = buffer_size, .usage = vk::BufferUsageFlagBits::eTransferSrc, .sharingMode = vk::SharingMode::eExclusive};
-	vk::raii::Buffer staging_buffer(vulkan_device, staging_info);
-	vk::MemoryRequirements staging_memory_requirements = staging_buffer.getMemoryRequirements();
-	vk::MemoryAllocateInfo staging_allocate_info{.allocationSize = staging_memory_requirements.size,
-												 .memoryTypeIndex = find_memory_type(staging_memory_requirements.memoryTypeBits,
-																					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)};
-	vk::raii::DeviceMemory staging_memory(vulkan_device, staging_allocate_info);
-	staging_buffer.bindMemory(staging_memory, 0);
-	void* staging_data = staging_memory.mapMemory(0, staging_info.size);
-	memcpy(staging_data, test_vertices, buffer_size);
-	staging_memory.unmapMemory();
+	{
+		vk::DeviceSize buffer_size = sizeof(test_vertices);
+		vk::raii::Buffer staging_buffer = nullptr;
+		vk::raii::DeviceMemory staging_memory = nullptr;
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
+					  vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory);
+		void* staging_data = staging_memory.mapMemory(0, buffer_size);
+		memcpy(staging_data, test_vertices, buffer_size);
+		staging_memory.unmapMemory();
 
-	vk::BufferCreateInfo buffer_info{.size = buffer_size,
-									 .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-									 .sharingMode = vk::SharingMode::eExclusive};
-	vertex_buffer = vk::raii::Buffer(vulkan_device, buffer_info);
-	vk::MemoryRequirements memory_requirements = vertex_buffer.getMemoryRequirements();
-	vk::MemoryAllocateInfo memory_allocate_info { .allocationSize = memory_requirements.size,
-												  .memoryTypeIndex = find_memory_type(memory_requirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)};
-	vertex_buffer_memory = vk::raii::DeviceMemory(vulkan_device, memory_allocate_info);
-	vertex_buffer.bindMemory(*vertex_buffer_memory, 0);
-	vk::CommandBufferAllocateInfo transfer_allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1};
-	vk::raii::CommandBuffer transfer_command_buffer = std::move(vulkan_device.allocateCommandBuffers(transfer_allocate_info).front());
-	transfer_command_buffer.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-	transfer_command_buffer.copyBuffer(staging_buffer, vertex_buffer, vk::BufferCopy(0, 0, buffer_size));
-	transfer_command_buffer.end();
-	vulkan_queue.submit(vk::SubmitInfo{.commandBufferCount = 1, .pCommandBuffers = &*transfer_command_buffer }, nullptr);
-	vulkan_queue.waitIdle();
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+					  vk::MemoryPropertyFlagBits::eDeviceLocal, vertex_buffer, vertex_buffer_memory);
+		copy_buffer(staging_buffer, vertex_buffer, buffer_size);
+	}
+
+	{
+		vk::DeviceSize buffer_size = sizeof(test_indices);
+		vk::raii::Buffer staging_buffer = nullptr;
+		vk::raii::DeviceMemory staging_memory = nullptr;
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
+					  vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory);
+		void* data = staging_memory.mapMemory(0, buffer_size);
+		memcpy(data, test_indices, buffer_size);
+		staging_memory.unmapMemory();
+
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+					  vk::MemoryPropertyFlagBits::eDeviceLocal, index_buffer, index_buffer_memory);
+		copy_buffer(staging_buffer, index_buffer, buffer_size);
+	}
 
 	vk::CommandBufferAllocateInfo allocate_info{.commandPool = command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 	command_buffers = vk::raii::CommandBuffers(vulkan_device, allocate_info);
@@ -368,9 +394,10 @@ void record_command(u32 index) {
 	command_buffers[frame_index].beginRendering(rendering_info);
 	command_buffers[frame_index].bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
 	command_buffers[frame_index].bindVertexBuffers(0, *vertex_buffer, {0});
+	command_buffers[frame_index].bindIndexBuffer(*index_buffer, 0, vk::IndexType::eUint16);
 	command_buffers[frame_index].setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
 	command_buffers[frame_index].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
-	command_buffers[frame_index].draw(static_cast<u32>(sizeof(test_vertices) / sizeof(Vertex)), 1, 0, 0);
+	command_buffers[frame_index].drawIndexed(sizeof(test_indices) / sizeof(u16), 1, 0, 0, 0);
 	command_buffers[frame_index].endRendering();
 	transition_image_layout(index, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe);
@@ -438,7 +465,7 @@ void on_window_resized() {
 	frame_buffer_resized = true;
 }
 
-void destroy_window() {
+void end_render() {
 	vulkan_device.waitIdle();
 	SDL_DestroyWindow(window);
 	SDL_Quit();

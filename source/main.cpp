@@ -13,7 +13,7 @@ void update() {
 int main() {
 	std::cout << "hello world";
 
-	if (!create_window()) {
+	if (!start_render()) {
 		return 1;
 	}
 
@@ -41,6 +41,6 @@ int main() {
         update();
     }
 
-	destroy_window();
+	end_render();
 	return 0;
 }
