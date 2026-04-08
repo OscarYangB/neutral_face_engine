@@ -5,6 +5,10 @@
 #include "SDL3/SDL_timer.h"
 #include "SDL3/SDL_events.h"
 #include "input.h"
+#include <iostream>
+
+static double fps_timer = 0.0;
+static u16 fps_count = 0;
 
 void update_camera_direction() {
 	static constexpr float MOUSE_MOVE_SPEED = 0.5f;
@@ -40,6 +44,14 @@ void update_movement() {
 		movement_direction += right;
 	}
 
+	if (input_down_this_frame(InputType::UP)) {
+		movement_direction -= Vector3::up();
+	} else if (input_down_this_frame(InputType::DOWN)) {
+		movement_direction += Vector3::up();
+	} else {
+		movement_direction.z = 0.f;
+	}
+
 	if (movement_direction == Vector3::zero()) {
 		return;
 	}
@@ -48,6 +60,13 @@ void update_movement() {
 }
 
 void update() {
+	fps_count++;
+	fps_timer += delta_time;
+	if (fps_timer > 1.f) {
+		fps_timer -= 1.f;
+		std::cout << "Frames per second: " << fps_count << "\n";
+		fps_count = 0;
+	}
 	update_input();
 	update_camera_direction();
 	update_movement();

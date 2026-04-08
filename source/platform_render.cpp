@@ -72,11 +72,11 @@ static_assert(true); // There's a clang bug that gives a warning unless this fuc
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wc23-extensions"
 constexpr char shader_data[] = {
-	#embed "../shaders/slang.spv"
+	#embed "../shaders/shader.spv"
 };
 
 constexpr char VERTEX_DATA[] = {
-	#embed "../tools/vertex_data"
+    #embed "../tools/vertex_data"
 };
 #pragma clang diagnostic pop
 
@@ -89,6 +89,7 @@ SDL_Window* get_window() {
 void create_swapchain() {
 	Vertex first = vertices[0];
 	Vertex second = vertices[1];
+	Vertex test = vertices[1234];
 
 	auto surface_capabilities = vulkan_physical_device.getSurfaceCapabilitiesKHR(*vulkan_surface);
 	std::vector<vk::SurfaceFormatKHR> available_formats = vulkan_physical_device.getSurfaceFormatsKHR(vulkan_surface);
@@ -247,10 +248,12 @@ bool start_render() {
 			}
 			return false;
 		});
-		auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+		auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+													 vk::PhysicalDeviceMaintenance5Features>();
 		bool supports_required_features = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
 			features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState &&
-			features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2;
+			features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
+			features.template get<vk::PhysicalDeviceMaintenance5Features>().maintenance5;
 		if (supports_vulkan_version && supports_graphics && supports_required_extensions && supports_required_features) {
 			vulkan_physical_device = device;
 			break;
@@ -267,10 +270,12 @@ bool start_render() {
 	}
 	float queue_priority = 0.5f;
 	vk::DeviceQueueCreateInfo device_queue_info {.queueFamilyIndex = family_index, .queueCount = 1, .pQueuePriorities = &queue_priority};
-	vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain = {
-		{},
-		{.synchronization2 = true, .dynamicRendering = true },
-		{.extendedDynamicState = true }
+	vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+					   vk::PhysicalDeviceMaintenance5Features> feature_chain = {
+		{.features = {.fillModeNonSolid = true}},
+		{.synchronization2 = vk::True, .dynamicRendering = vk::True, },
+		{.extendedDynamicState = vk::True },
+		{.maintenance5 = vk::True}
 	};
 	vk::DeviceCreateInfo device_info {.pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
 									  .queueCreateInfoCount = 1,
@@ -308,7 +313,7 @@ bool start_render() {
 	vk::PipelineRasterizationStateCreateInfo rasterizer{
 		.depthClampEnable = vk::False,
 		.rasterizerDiscardEnable = vk::False,
-		.polygonMode = vk::PolygonMode::eFill,
+		.polygonMode = vk::PolygonMode::ePoint,
 		.cullMode = vk::CullModeFlagBits::eNone, // TEST
 		.frontFace = vk::FrontFace::eClockwise,
 		.depthBiasEnable = vk::False,
@@ -495,7 +500,9 @@ void reset_swapchain() {
 	delete swapchain;
 	swapchain = nullptr;
 
-	while ((SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) != 0) {
+	int width, height;
+	SDL_GetWindowSize(window, &width, &height);
+	while (width <= 0 || height <= 0) {
 		SDL_Event event;
 		SDL_WaitEvent(&event);
 		if (event.type == SDL_EVENT_WINDOW_RESTORED) {
@@ -504,8 +511,11 @@ void reset_swapchain() {
 	}
 
 	vulkan_device.waitIdle();
+
 	create_swapchain();
-	create_depth_image();
+	if (extent.width > 0) {
+		create_depth_image();
+	}
 }
 
 void update_uniform_buffer(u32 index) {

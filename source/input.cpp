@@ -18,6 +18,8 @@ void update_input() {
 	update_input_state(InputType::BACKWARD, key_states[SDL_SCANCODE_S]);
 	update_input_state(InputType::LEFT, key_states[SDL_SCANCODE_A]);
 	update_input_state(InputType::RIGHT, key_states[SDL_SCANCODE_D]);
+	update_input_state(InputType::UP, key_states[SDL_SCANCODE_SPACE]);
+	update_input_state(InputType::DOWN, key_states[SDL_SCANCODE_LSHIFT]);
 
 	float mouse_x; float mouse_y;
 	SDL_MouseButtonFlags mouse_state = SDL_GetMouseState(&mouse_x, &mouse_y);

@@ -9,6 +9,8 @@ enum class InputType {
 	BACKWARD,
 	LEFT,
 	RIGHT,
+	UP,
+	DOWN,
 	MOUSE_CLICK,
 	_count
 };
