@@ -255,7 +255,8 @@ bool start_render() {
 		});
 		auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 		bool supports_required_features = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-			features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+			features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState &&
+			features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2;
 		if (supports_vulkan_version && supports_graphics && supports_required_extensions && supports_required_features) {
 			vulkan_physical_device = device;
 			break;
@@ -274,7 +275,7 @@ bool start_render() {
 	vk::DeviceQueueCreateInfo device_queue_info {.queueFamilyIndex = family_index, .queueCount = 1, .pQueuePriorities = &queue_priority};
 	vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain = {
 		{},
-		{.dynamicRendering = true },
+		{.synchronization2 = true, .dynamicRendering = true },
 		{.extendedDynamicState = true }
 	};
 	vk::DeviceCreateInfo device_info {.pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
@@ -287,6 +288,7 @@ bool start_render() {
 	vulkan_queue = vk::raii::Queue(vulkan_device, family_index, 0);
 
 	create_swapchain();
+	create_depth_image();
 
 	vk::DescriptorSetLayoutBinding uniform_layout_binding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
 	vk::DescriptorSetLayoutCreateInfo layout_info = {.bindingCount = 1, .pBindings = &uniform_layout_binding};
@@ -313,7 +315,7 @@ bool start_render() {
 		.depthClampEnable = vk::False,
 		.rasterizerDiscardEnable = vk::False,
 		.polygonMode = vk::PolygonMode::eFill,
-		.cullMode = vk::CullModeFlagBits::eBack,
+		.cullMode = vk::CullModeFlagBits::eNone, // TEST
 		.frontFace = vk::FrontFace::eClockwise,
 		.depthBiasEnable = vk::False,
 		.lineWidth = 1.f};
@@ -364,8 +366,6 @@ bool start_render() {
 
 	vk::CommandPoolCreateInfo pool_info = {.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = family_index};
 	command_pool = vk::raii::CommandPool(vulkan_device, pool_info);
-
-	create_depth_image();
 
 	{
 		vk::DeviceSize buffer_size = sizeof(test_vertices);
@@ -531,25 +531,24 @@ void reset_swapchain() {
 
 void update_uniform_buffer(u32 index) {
 	UniformBufferObject uniform_buffer{};
-	uniform_buffer.model = Matrix::rotate(Matrix::identity(), SDL_GetTicks() / 1000.f, Vector3::up());
+	uniform_buffer.model = Matrix::rotate(Matrix::identity(), SDL_GetTicks() / 1000.f, Vector3::j());
 	uniform_buffer.view = Matrix::look_at({2.f, 2.f, 2.f}, {0.f, 0.f, 0.f});
 	uniform_buffer.projection = Matrix::perspective(M_PI / 4.f, static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.f);
 	memcpy(uniform_buffers_mapped[index], &uniform_buffer, sizeof(uniform_buffer));
 }
 
 void draw_frame() {
-	update_uniform_buffer(frame_index);
-
 	auto fence_result = vulkan_device.waitForFences(*draw_fences[frame_index], vk::True, UINT64_MAX);
 	assert(fence_result == vk::Result::eSuccess);
-	auto [result, index] = swapchain->acquireNextImage(UINT64_MAX, *present_semaphores[frame_index], nullptr);
+	auto [result, image_index] = swapchain->acquireNextImage(UINT64_MAX, *present_semaphores[frame_index], nullptr);
 	if (result == vk::Result::eErrorOutOfDateKHR) {
 		reset_swapchain();
 		return;
 	}
 	assert(result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR);
+	update_uniform_buffer(frame_index);
 	vulkan_device.resetFences(*draw_fences[frame_index]);
-	record_command(index);
+	record_command(image_index);
 
 	vk::PipelineStageFlags wait_destination_stage_mask{vk::PipelineStageFlagBits::eColorAttachmentOutput};
 	vk::SubmitInfo submit_info = {
@@ -559,15 +558,15 @@ void draw_frame() {
 		.commandBufferCount = 1,
 		.pCommandBuffers = &*command_buffers[frame_index],
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &*render_semaphores[frame_index]};
+		.pSignalSemaphores = &*render_semaphores[image_index]};
 	vulkan_queue.submit(submit_info, *draw_fences[frame_index]);
 
 	vk::PresentInfoKHR present_info {
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &*render_semaphores[frame_index],
+		.pWaitSemaphores = &*render_semaphores[image_index],
 		.swapchainCount = 1,
 		.pSwapchains = &**swapchain,
-		.pImageIndices = &index};
+		.pImageIndices = &image_index};
 	result = vulkan_queue.presentKHR(present_info);
 	if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || frame_buffer_resized) {
 		frame_buffer_resized = false;
