@@ -9,7 +9,6 @@
 #include "definitions.h"
 #include "vector.h"
 #include "matrix.h"
-#include "SDL3/SDL_timer.h"
 #include "game.h"
 
 struct Vertex {
@@ -24,23 +23,6 @@ struct Vertex {
 		return {{{.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, position)},
 				 {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)}}};
 	}
-};
-
-constexpr Vertex test_vertices[] = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}}
-};
-
-constexpr u16 test_indices[] {
-	0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
 };
 
 struct UniformBufferObject {
@@ -71,8 +53,6 @@ vk::raii::Pipeline vulkan_pipeline = nullptr;
 vk::raii::CommandPool command_pool = nullptr;
 vk::raii::Buffer vertex_buffer = nullptr;
 vk::raii::DeviceMemory vertex_buffer_memory = nullptr;
-vk::raii::Buffer index_buffer = nullptr;
-vk::raii::DeviceMemory index_buffer_memory = nullptr;
 std::vector<vk::raii::Buffer> uniform_buffers{};
 std::vector<vk::raii::DeviceMemory> uniform_buffers_memory{};
 std::vector<void*> uniform_buffers_mapped{};
@@ -94,13 +74,22 @@ static_assert(true); // There's a clang bug that gives a warning unless this fuc
 constexpr char shader_data[] = {
 	#embed "../shaders/slang.spv"
 };
+
+constexpr char VERTEX_DATA[] = {
+	#embed "../tools/vertex_data"
+};
 #pragma clang diagnostic pop
+
+const Vertex* vertices = reinterpret_cast<const Vertex*>(VERTEX_DATA);
 
 SDL_Window* get_window() {
 	return window;
 }
 
 void create_swapchain() {
+	Vertex first = vertices[0];
+	Vertex second = vertices[1];
+
 	auto surface_capabilities = vulkan_physical_device.getSurfaceCapabilitiesKHR(*vulkan_surface);
 	std::vector<vk::SurfaceFormatKHR> available_formats = vulkan_physical_device.getSurfaceFormatsKHR(vulkan_surface);
 	assert(!available_formats.empty());
@@ -312,7 +301,7 @@ bool start_render() {
 															 .pVertexBindingDescriptions = &binding_description,
 															 .vertexAttributeDescriptionCount = static_cast<u32>(attribute_descriptions.size()),
 															 .pVertexAttributeDescriptions = attribute_descriptions.data()};
-	vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::eTriangleList};
+	vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::ePointList};
 	vk::Viewport viewport{0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f};
 	vk::Rect2D scissor{vk::Offset2D{0,0}, extent};
 	vk::PipelineViewportStateCreateInfo viewport_info{.viewportCount = 1, .pViewports = &viewport, .scissorCount = 1, .pScissors=&scissor};
@@ -373,32 +362,18 @@ bool start_render() {
 	command_pool = vk::raii::CommandPool(vulkan_device, pool_info);
 
 	{
-		vk::DeviceSize buffer_size = sizeof(test_vertices);
+		vk::DeviceSize buffer_size = sizeof(VERTEX_DATA);
 		vk::raii::Buffer staging_buffer = nullptr;
 		vk::raii::DeviceMemory staging_memory = nullptr;
 		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
 					  vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory);
 		void* staging_data = staging_memory.mapMemory(0, buffer_size);
-		memcpy(staging_data, test_vertices, buffer_size);
+		memcpy(staging_data, VERTEX_DATA, buffer_size);
 		staging_memory.unmapMemory();
 
 		create_buffer(buffer_size, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 					  vk::MemoryPropertyFlagBits::eDeviceLocal, vertex_buffer, vertex_buffer_memory);
 		copy_buffer(staging_buffer, vertex_buffer, buffer_size);
-	}
-	{
-		vk::DeviceSize buffer_size = sizeof(test_indices);
-		vk::raii::Buffer staging_buffer = nullptr;
-		vk::raii::DeviceMemory staging_memory = nullptr;
-		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
-					  vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory);
-		void* data = staging_memory.mapMemory(0, buffer_size);
-		memcpy(data, test_indices, buffer_size);
-		staging_memory.unmapMemory();
-
-		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-					  vk::MemoryPropertyFlagBits::eDeviceLocal, index_buffer, index_buffer_memory);
-		copy_buffer(staging_buffer, index_buffer, buffer_size);
 	}
 	{
 		for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -505,11 +480,10 @@ void record_command(u32 index) {
 	command_buffers[frame_index].beginRendering(rendering_info);
 	command_buffers[frame_index].bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
 	command_buffers[frame_index].bindVertexBuffers(0, *vertex_buffer, {0});
-	command_buffers[frame_index].bindIndexBuffer(*index_buffer, 0, vk::IndexType::eUint16);
 	command_buffers[frame_index].setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
 	command_buffers[frame_index].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
 	command_buffers[frame_index].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout, 0, *descriptor_sets[frame_index], nullptr);
-	command_buffers[frame_index].drawIndexed(sizeof(test_indices) / sizeof(u16), 1, 0, 0, 0);
+	command_buffers[frame_index].draw(sizeof(VERTEX_DATA) / sizeof(Vertex), 1, 0, 0);
 	command_buffers[frame_index].endRendering();
 	transition_image_layout(swapchain_images[index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
@@ -536,7 +510,7 @@ void reset_swapchain() {
 
 void update_uniform_buffer(u32 index) {
 	UniformBufferObject uniform_buffer{};
-	uniform_buffer.model = Matrix::rotate(Matrix::identity(), SDL_GetTicks() / 1000.f, Vector3::j());
+	uniform_buffer.model = Matrix::identity();
 	uniform_buffer.view = Matrix::look_at(camera_direction.normalized() + camera_position, camera_position);
 	uniform_buffer.projection = Matrix::perspective(M_PI / 4.f, static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.f);
 	memcpy(uniform_buffers_mapped[index], &uniform_buffer, sizeof(uniform_buffer));
