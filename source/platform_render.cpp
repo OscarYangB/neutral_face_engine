@@ -10,6 +10,7 @@
 #include "vector.h"
 #include "matrix.h"
 #include "SDL3/SDL_timer.h"
+#include "game.h"
 
 struct Vertex {
 	Vector3 position{};
@@ -94,6 +95,10 @@ constexpr char shader_data[] = {
 	#embed "../shaders/slang.spv"
 };
 #pragma clang diagnostic pop
+
+SDL_Window* get_window() {
+	return window;
+}
 
 void create_swapchain() {
 	auto surface_capabilities = vulkan_physical_device.getSurfaceCapabilitiesKHR(*vulkan_surface);
@@ -532,7 +537,7 @@ void reset_swapchain() {
 void update_uniform_buffer(u32 index) {
 	UniformBufferObject uniform_buffer{};
 	uniform_buffer.model = Matrix::rotate(Matrix::identity(), SDL_GetTicks() / 1000.f, Vector3::j());
-	uniform_buffer.view = Matrix::look_at({2.f, 2.f, 2.f}, {0.f, 0.f, 0.f});
+	uniform_buffer.view = Matrix::look_at(camera_direction.normalized() + camera_position, camera_position);
 	uniform_buffer.projection = Matrix::perspective(M_PI / 4.f, static_cast<float>(extent.width) / static_cast<float>(extent.height), 0.1f, 10.f);
 	memcpy(uniform_buffers_mapped[index], &uniform_buffer, sizeof(uniform_buffer));
 }

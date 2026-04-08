@@ -113,6 +113,7 @@ struct Vector3 {
 	static Vector3 lerp(const Vector3& first, const Vector3& second, float scalar);
 	static float dot(const Vector3& first, const Vector3& second);
 	static Vector3 cross(const Vector3& first, const Vector3& second);
+	static float angle(const Vector3& first, const Vector3& second);
 
 	static constexpr Vector3 zero() { return Vector3{0.f, 0.f, 0.f}; }
 	static constexpr Vector3 one() { return Vector3{1.f, 1.f, 1.f}; }

@@ -104,3 +104,7 @@ Vector3 Vector3::cross(const Vector3& first, const Vector3& second) {
 			 first.z * second.x - first.x * second.z,
 			 first.x * second.y - first.y * second.x};
 }
+
+float Vector3::angle(const Vector3& first, const Vector3& second) {
+	return std::acos(Vector3::dot(first.normalized(), second.normalized()));
+}
