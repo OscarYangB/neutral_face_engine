@@ -13,7 +13,6 @@ ConstantBuffer<UniformBuffer> uniform_buffer;
 
 struct VertexOutput {
     float4 position : SV_Position;
-    float4 point_size : SV_PointSize;
     float3 color;
 };
 
@@ -22,7 +21,6 @@ VertexOutput vert_main(VertexInput input) {
     VertexOutput output;
     output.position = mul(uniform_buffer.projection, mul(uniform_buffer.view, mul(uniform_buffer.model, float4(input.position, 1.0))));
     output.color = input.color;
-    output.point_size = 5.f;
     return output;
 };
 

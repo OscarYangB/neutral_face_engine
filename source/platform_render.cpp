@@ -53,6 +53,8 @@ vk::raii::Pipeline vulkan_pipeline = nullptr;
 vk::raii::CommandPool command_pool = nullptr;
 vk::raii::Buffer vertex_buffer = nullptr;
 vk::raii::DeviceMemory vertex_buffer_memory = nullptr;
+vk::raii::Buffer index_buffer = nullptr;
+vk::raii::DeviceMemory index_buffer_memory = nullptr;
 std::vector<vk::raii::Buffer> uniform_buffers{};
 std::vector<vk::raii::DeviceMemory> uniform_buffers_memory{};
 std::vector<void*> uniform_buffers_mapped{};
@@ -77,6 +79,10 @@ constexpr char shader_data[] = {
 
 constexpr char VERTEX_DATA[] = {
     #embed "../tools/vertex_data"
+};
+
+constexpr char INDEX_DATA[] = {
+    #embed "../tools/index_data"
 };
 #pragma clang diagnostic pop
 
@@ -272,7 +278,7 @@ bool start_render() {
 	vk::DeviceQueueCreateInfo device_queue_info {.queueFamilyIndex = family_index, .queueCount = 1, .pQueuePriorities = &queue_priority};
 	vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
 					   vk::PhysicalDeviceMaintenance5Features> feature_chain = {
-		{.features = {.fillModeNonSolid = true}},
+		{},
 		{.synchronization2 = vk::True, .dynamicRendering = vk::True, },
 		{.extendedDynamicState = vk::True },
 		{.maintenance5 = vk::True}
@@ -306,14 +312,14 @@ bool start_render() {
 															 .pVertexBindingDescriptions = &binding_description,
 															 .vertexAttributeDescriptionCount = static_cast<u32>(attribute_descriptions.size()),
 															 .pVertexAttributeDescriptions = attribute_descriptions.data()};
-	vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::ePointList};
+	vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::eTriangleList};
 	vk::Viewport viewport{0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f};
 	vk::Rect2D scissor{vk::Offset2D{0,0}, extent};
 	vk::PipelineViewportStateCreateInfo viewport_info{.viewportCount = 1, .pViewports = &viewport, .scissorCount = 1, .pScissors=&scissor};
 	vk::PipelineRasterizationStateCreateInfo rasterizer{
 		.depthClampEnable = vk::False,
 		.rasterizerDiscardEnable = vk::False,
-		.polygonMode = vk::PolygonMode::ePoint,
+		.polygonMode = vk::PolygonMode::eFill,
 		.cullMode = vk::CullModeFlagBits::eNone, // TEST
 		.frontFace = vk::FrontFace::eClockwise,
 		.depthBiasEnable = vk::False,
@@ -379,6 +385,20 @@ bool start_render() {
 		create_buffer(buffer_size, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
 					  vk::MemoryPropertyFlagBits::eDeviceLocal, vertex_buffer, vertex_buffer_memory);
 		copy_buffer(staging_buffer, vertex_buffer, buffer_size);
+	}
+	{
+		vk::DeviceSize buffer_size = sizeof(INDEX_DATA);
+		vk::raii::Buffer staging_buffer = nullptr;
+		vk::raii::DeviceMemory staging_memory = nullptr;
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
+					  vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, staging_buffer, staging_memory);
+		void* data = staging_memory.mapMemory(0, buffer_size);
+		memcpy(data, INDEX_DATA, buffer_size);
+		staging_memory.unmapMemory();
+
+		create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+					  vk::MemoryPropertyFlagBits::eDeviceLocal, index_buffer, index_buffer_memory);
+		copy_buffer(staging_buffer, index_buffer, buffer_size);
 	}
 	{
 		for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -485,10 +505,11 @@ void record_command(u32 index) {
 	command_buffers[frame_index].beginRendering(rendering_info);
 	command_buffers[frame_index].bindPipeline(vk::PipelineBindPoint::eGraphics, *vulkan_pipeline);
 	command_buffers[frame_index].bindVertexBuffers(0, *vertex_buffer, {0});
+	command_buffers[frame_index].bindIndexBuffer(*index_buffer, 0, vk::IndexType::eUint32);
 	command_buffers[frame_index].setViewport(0, vk::Viewport(0.f, 0.f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f));
 	command_buffers[frame_index].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), extent));
 	command_buffers[frame_index].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout, 0, *descriptor_sets[frame_index], nullptr);
-	command_buffers[frame_index].draw(sizeof(VERTEX_DATA) / sizeof(Vertex), 1, 0, 0);
+	command_buffers[frame_index].drawIndexed(sizeof(INDEX_DATA) / sizeof(u32), 1, 0, 0, 0);
 	command_buffers[frame_index].endRendering();
 	transition_image_layout(swapchain_images[index], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits2::eColorAttachmentWrite, {},
 							vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
